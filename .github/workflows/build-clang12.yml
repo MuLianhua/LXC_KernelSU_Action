@@ -96,28 +96,22 @@ jobs:
         export PATH=$GITHUB_WORKSPACE/kernel_workspace/clang-aosp/clang-r416183b/bin:$PATH
         export KBUILD_BUILD_HOST=17
         export KBUILD_BUILD_USER=HyperPower
-        
+
         # 1. 生成 .config
         make -j$(nproc --all) O=out ARCH=arm64 ${{ env.KERNEL_CONFIG }}
-        
-        # 2. 单独编译出内核自带的 dtc 工具
-        make -j$(nproc --all) O=out ARCH=arm64 scripts
-        
-        # 3. 注释掉 LineageOS 源码里有问题的韩国版 dtbo 目标，防止报错
-        sed -i 's/^dtb-$(CONFIG_ARCH_QCOM) += sm8150-flash_lao_com_kr_plus_rev-d-overlay.dtbo/# &/' arch/arm64/boot/dts/lge/Makefile || true
-        sed -i 's/sm8150-flash_lao_com_kr_plus_rev-d-overlay.dtbo//g' arch/arm64/boot/dts/lge/Makefile || true
-        
-        # 4. 使用绝对路径的 dtc 进行编译
+
+        # 2. 物理屏蔽引发报错的韩国版 DTB (直接改 Makefile 注释掉)
+        sed -i '/sm8150-flash_lao_com_kr_plus_rev-d-overlay.dtbo/s/^/# /' arch/arm64/boot/dts/lge/Makefile
+
+        # 3. 直接开始编译，不加任何 DTC_EXT 参数（让系统用默认自带的）
         if [ "${{ env.LLVM_CONFIG }}" = "y" ]; then
           make -j$(nproc --all) CC="ccache clang" CXX=clang++ O=out ARCH=arm64 \
             CLANG_TRIPLE="aarch64-linux-gnu-" CROSS_COMPILE="aarch64-linux-gnu-" \
-            CROSS_COMPILE_ARM32="arm-linux-gnueabi-" LLVM=1 LLVM_IAS=1 \
-            DTC_EXT=$(pwd)/out/scripts/dtc/dtc Image.gz-dtb
+            CROSS_COMPILE_ARM32="arm-linux-gnueabi-" LLVM=1 LLVM_IAS=1 Image.gz-dtb
         else
           make -j$(nproc --all) CC="ccache clang" CXX=clang++ O=out ARCH=arm64 \
             CLANG_TRIPLE="aarch64-linux-gnu-" CROSS_COMPILE="aarch64-linux-gnu-" \
-            CROSS_COMPILE_ARM32="arm-linux-gnueabi-" \
-            DTC_EXT=$(pwd)/out/scripts/dtc/dtc Image.gz-dtb
+            CROSS_COMPILE_ARM32="arm-linux-gnueabi-" Image.gz-dtb
         fi
 
     - name: 准备打包内核
@@ -132,9 +126,9 @@ jobs:
         sed -i 's/is_slot_device=1;/is_slot_device=0;/g' AnyKernel3/anykernel.sh
         sed -i 's/is_slot_device=auto;/is_slot_device=0;/g' AnyKernel3/anykernel.sh
         sed -i 's/is_slot_device=0;/is_slot_device=0;/g' AnyKernel3/anykernel.sh
-        
+
         cp android-kernel/out/arch/arm64/boot/${{ env.KERNEL_IMAGE_NAME }} AnyKernel3/
-        
+
         if [ "${{ env.NEED_DTBO }}" = "true" ]; then
             echo "NEED=true" >> $GITHUB_ENV
             if [ -f android-kernel/out/arch/arm64/boot/dtbo.img ]; then
