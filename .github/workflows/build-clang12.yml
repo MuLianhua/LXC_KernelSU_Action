@@ -100,10 +100,15 @@ jobs:
         # 1. 生成 .config
         make -j$(nproc --all) O=out ARCH=arm64 ${{ env.KERNEL_CONFIG }}
 
-        # 2. 终极必杀：直接删掉引发报错的韩国版 .dts 源文件！
-        rm -f arch/arm64/boot/dts/lge/sm8150-flash/sm8150-flash_lao_com/sm8150-flash_lao_com_kr_plus_rev-d-overlay.dts
+        # 2. 终极大扫除：把所有引发依赖报错的 LG 运营商特定 DTS 文件全删了！
+        rm -rf arch/arm64/boot/dts/lge/sm8150-flash/sm8150-flash_lao_com/*.dts
+        rm -rf arch/arm64/boot/dts/lge/sm8150-flash/sm8150-flash_dcm_jp/*.dts
+        rm -rf arch/arm64/boot/dts/lge/sm8150-flash/sm8150-flash_lao_ldu/*.dts
+        
+        # 把那个倒霉的公共库清空，就算有漏网之鱼 include 它，也是个空文件，不会报语法错误
+        echo "" > arch/arm64/boot/dts/lge/sm8150-flash/sm8150-flash_common/sm8150-flash_common.dtsi
 
-        # 3. 编译镜像
+        # 3. 编译主镜像
         if [ "${{ env.LLVM_CONFIG }}" = "y" ]; then
           make -j$(nproc --all) CC="ccache clang" CXX=clang++ O=out ARCH=arm64 \
             CLANG_TRIPLE="aarch64-linux-gnu-" CROSS_COMPILE="aarch64-linux-gnu-" \
