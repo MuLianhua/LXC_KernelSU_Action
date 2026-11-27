@@ -100,10 +100,10 @@ jobs:
         # 1. 生成 .config
         make -j$(nproc --all) O=out ARCH=arm64 ${{ env.KERNEL_CONFIG }}
 
-        # 2. 物理屏蔽引发报错的韩国版 DTB (直接改 Makefile 注释掉)
-        sed -i '/sm8150-flash_lao_com_kr_plus_rev-d-overlay.dtbo/s/^/# /' arch/arm64/boot/dts/lge/Makefile
+        # 2. 终极必杀：直接删掉引发报错的韩国版 .dts 源文件！
+        rm -f arch/arm64/boot/dts/lge/sm8150-flash/sm8150-flash_lao_com/sm8150-flash_lao_com_kr_plus_rev-d-overlay.dts
 
-        # 3. 直接开始编译，不加任何 DTC_EXT 参数（让系统用默认自带的）
+        # 3. 编译镜像
         if [ "${{ env.LLVM_CONFIG }}" = "y" ]; then
           make -j$(nproc --all) CC="ccache clang" CXX=clang++ O=out ARCH=arm64 \
             CLANG_TRIPLE="aarch64-linux-gnu-" CROSS_COMPILE="aarch64-linux-gnu-" \
