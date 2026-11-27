@@ -1,10 +1,10 @@
-name: 低端机 谷歌clang12.0.5
+name: 高端机 谷歌clang12.0.5
 on:
   workflow_dispatch:
 
 jobs:
   build:
-    name:
+    name: Build Kernel
     runs-on: ubuntu-22.04
     if: github.event.repository.owner.id == github.event.sender.id
 
@@ -28,8 +28,9 @@ jobs:
 
     - name: 构建编译内核环境
       run: |
-        sudo apt update
-        sudo apt -y install git make bc bison ccache openssl zip kmod cpio flex libelf-dev curl libssl-dev libtfm-dev axel device-tree-compiler ca-certificates python3 python2 binutils binutils-aarch64-linux-gnu binutils-arm-linux-gnueabi
+        sudo apt-get update
+        # 移除了 python2，避免在 Ubuntu 22.04 报错
+        sudo -E apt-get -y -qq install git make bc bison ccache openssl zip kmod cpio flex libelf-dev curl libssl-dev libtfm-dev axel device-tree-compiler ca-certificates python3 binutils binutils-aarch64-linux-gnu binutils-arm-linux-gnueabi
         mkdir -p $GITHUB_WORKSPACE/kernel_workspace
 
     - name: 切换python2.7
@@ -38,7 +39,7 @@ jobs:
         sudo rm -f /usr/bin/python
         sudo ln -s /usr/bin/python2.7 /usr/bin/python
 
-    - name: 下载谷歌clang12编译器
+    - name: 下载Clang-aosp编译器
       run: |
         cd $GITHUB_WORKSPACE/kernel_workspace
         mkdir clang-aosp
@@ -48,7 +49,6 @@ jobs:
       run: |
         cd $GITHUB_WORKSPACE/kernel_workspace
         git clone ${{ env.KERNEL_SOURCE }} -b ${{ env.KERNEL_SOURCE_BRANCH }} android-kernel --depth=1
-
 
     - name: 开启lxc和docker配置
       if: env.ENABLE_LXC_DOCKER == 'true'
@@ -88,18 +88,29 @@ jobs:
     - name: 设置ccache缓存
       uses: hendrikmuhs/ccache-action@v1.2
       with:
-        key: build-kernel-mido-kernel
+        key: build-kernel-v50-${{ env.KERNEL_ZIP_NAME }}
         max-size: 2G
 
     - name: 开始编译内核
       run: |
         cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
         export PATH=$GITHUB_WORKSPACE/kernel_workspace/clang-aosp/clang-r416183b/bin:$PATH
-        make O=out ARCH=arm64 ${{ env.KERNEL_CONFIG }}
-        if [ ${{env.LLVM_CONFIG}}=y ]; then
-        make -j$(nproc --all) CC="ccache clang" O=out ARCH=arm64 CROSS_COMPILE="aarch64-linux-gnu-" CROSS_COMPILE_ARM32="arm-linux-gnueabi-" LLVM=1 LLVM_IAS=1
+        export KBUILD_BUILD_HOST=17
+        export KBUILD_BUILD_USER=HyperPower
+        
+        make -j$(nproc --all) O=out ARCH=arm64 ${{ env.KERNEL_CONFIG }}
+        
+        # 修复了 if 的语法空格，并添加了 DTC_EXT 和 Image.gz-dtb 防止截断和 DTB 报错
+        if [ "${{ env.LLVM_CONFIG }}" = "y" ]; then
+          make -j$(nproc --all) CC="ccache clang" CXX=clang++ O=out ARCH=arm64 \
+            CLANG_TRIPLE="aarch64-linux-gnu-" CROSS_COMPILE="aarch64-linux-gnu-" \
+            CROSS_COMPILE_ARM32="arm-linux-gnueabi-" LLVM=1 LLVM_IAS=1 \
+            DTC_EXT=scripts/dtc/dtc Image.gz-dtb
         else
-        make -j$(nproc --all) CC="ccache clang" O=out ARCH=arm64 CROSS_COMPILE="aarch64-linux-gnu-" CROSS_COMPILE_ARM32="arm-linux-gnueabi-"
+          make -j$(nproc --all) CC="ccache clang" CXX=clang++ O=out ARCH=arm64 \
+            CLANG_TRIPLE="aarch64-linux-gnu-" CROSS_COMPILE="aarch64-linux-gnu-" \
+            CROSS_COMPILE_ARM32="arm-linux-gnueabi-" \
+            DTC_EXT=scripts/dtc/dtc Image.gz-dtb
         fi
 
     - name: 准备打包内核
@@ -110,15 +121,35 @@ jobs:
         git checkout 458caeda335554c58930bf6dbfa23e829911e338
         cd ../
         sed -i 's/do.devicecheck=1/do.devicecheck=0/g' AnyKernel3/anykernel.sh
+        # 适配 LG V50 的分区路径 (A-only)
         sed -i 's!block=/dev/block/platform/omap/omap_hsmmc.0/by-name/boot;!block=/dev/block/bootdevice/by-name/boot;!g' AnyKernel3/anykernel.sh
         sed -i 's/is_slot_device=1;/is_slot_device=0;/g' AnyKernel3/anykernel.sh
+        sed -i 's/is_slot_device=auto;/is_slot_device=0;/g' AnyKernel3/anykernel.sh
+        sed -i 's/is_slot_device=0;/is_slot_device=0;/g' AnyKernel3/anykernel.sh
+        
         cp android-kernel/out/arch/arm64/boot/${{ env.KERNEL_IMAGE_NAME }} AnyKernel3/
+        
+        if [ "${{ env.NEED_DTBO }}" = "true" ]; then
+            echo "NEED=true" >> $GITHUB_ENV
+            if [ -f android-kernel/out/arch/arm64/boot/dtbo.img ]; then
+                echo "DTBO_EXIST=true" >> $GITHUB_ENV
+            fi
+        fi
+        if [ "${{ env.DTBO_EXIST }}" = "true" ]; then
+            cp android-kernel/out/arch/arm64/boot/dtbo.img AnyKernel3/
+        fi
         rm -rf AnyKernel3/.git* AnyKernel3/README.md
         rm -rf AnyKernel3/ramdisk AnyKernel3/modules AnyKernel3/patch
 
-
-    - name: 打包并上传
+    - name: 上传内核
       uses: actions/upload-artifact@v4
       with:
         name: ${{ env.KERNEL_ZIP_NAME }}
         path: kernel_workspace/AnyKernel3/*
+
+    - name: 上传dtbo镜像
+      if: env.DTBO_EXIST == 'true' && env.NEED == 'true'
+      uses: actions/upload-artifact@v4
+      with:
+        name: dtbo-image
+        path: kernel_workspace/android-kernel/out/arch/arm64/boot/dtbo.img
